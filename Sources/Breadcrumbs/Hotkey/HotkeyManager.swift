@@ -39,7 +39,7 @@ final class HotkeyManager {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            fputs("Failed to create event tap — check Accessibility permission for Breadcrumbs\n", stderr)
+            Log.write("Failed to create event tap — check Accessibility permission for Breadcrumbs\n")
             return
         }
 
@@ -47,6 +47,7 @@ final class HotkeyManager {
         runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        Log.write("Event tap created and enabled successfully.\n")
     }
 
     private func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, tap: CFMachPort?) -> Unmanaged<CGEvent>? {

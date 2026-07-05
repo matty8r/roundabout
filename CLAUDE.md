@@ -22,7 +22,7 @@ Run (kill any existing instance first; launch from a shell so the process inheri
 ```
 pkill -f "Breadcrumbs" 2>/dev/null
 ./scripts/build_app.sh debug
-source ~/.zshrc   # if ANTHROPIC_API_KEY lives there
+source .env   # loads ANTHROPIC_API_KEY (gitignored, not in shell rc)
 nohup ./Breadcrumbs.app/Contents/MacOS/Breadcrumbs > /tmp/breadcrumbs.log 2>&1 &
 disown
 ```

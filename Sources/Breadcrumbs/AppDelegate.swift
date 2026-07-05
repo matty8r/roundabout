@@ -16,19 +16,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkeyManager = HotkeyManager()
     private let switcher = SwitcherWindowController()
 
+    // The most recent full collection, used to prune closed tabs/apps on *every*
+    // render — not just the render that did the collecting. Without this, a render
+    // triggered by something other than a full tick (a summary finishing async, or
+    // the instant app-switch notification) skipped pruning entirely, which could
+    // silently "revive" a just-closed tab/app until the next 15s poll happened to land.
+    private var lastFreshSnapshots: [Snapshot] = []
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        if HotkeyManager.ensureAccessibilityPermission() {
+        // Unconditional, so every launch — success or failure, manual or via login
+        // item — leaves durable evidence of what happened. Without this, a launch
+        // that hits no error path (the common case) writes nothing at all, which
+        // makes "did it even start" indistinguishable from "log file doesn't exist yet."
+        let trusted = HotkeyManager.ensureAccessibilityPermission()
+        Log.write("Breadcrumbs launched (pid \(ProcessInfo.processInfo.processIdentifier)); accessibility trusted = \(trusted)\n")
+
+        if trusted {
             setUpHotkey()
         } else {
-            fputs("Accessibility permission not yet granted — grant it in System Settings, then relaunch Breadcrumbs.\n", stderr)
+            Log.write("Accessibility permission not yet granted — grant it in System Settings, then relaunch Breadcrumbs.\n")
         }
+
+        // 15s polling alone can miss an app you only glance at briefly (open it, do
+        // something, switch away in under 15s) — it can fall entirely between two
+        // ticks and never get recorded. This fires instantly on every app switch.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(appActivated(_:)),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
 
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
         tick() // run immediately on launch
+    }
+
+    @objc private func appActivated(_ notification: Notification) {
+        // .regular excludes system/background agents — see FrontmostAppCollector's
+        // comment on the same filter for the poll path.
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.activationPolicy == .regular,
+              let name = app.localizedName else { return }
+        store.insert(Snapshot(
+            source: "frontmost", app: name, title: nil, cwd: nil, tty: nil,
+            timestamp: Date(), isActiveNow: true
+        ))
+        refreshAndRender()
     }
 
     private func setUpHotkey() {
@@ -50,21 +85,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func tick() {
+        var fresh: [Snapshot] = []
         if let snapshot = FrontmostAppCollector.collect() {
             store.insert(snapshot)
+            fresh.append(snapshot)
         }
-        for snapshot in TerminalCollector.collect() {
-            store.insert(snapshot)
-        }
-        for snapshot in SafariCollector.collect() {
-            store.insert(snapshot)
-        }
+        let terminalSnapshots = TerminalCollector.collect()
+        terminalSnapshots.forEach(store.insert)
+        fresh.append(contentsOf: terminalSnapshots)
+
+        let safariSnapshots = SafariCollector.collect()
+        safariSnapshots.forEach(store.insert)
+        fresh.append(contentsOf: safariSnapshots)
+
+        lastFreshSnapshots = fresh
         refreshAndRender()
     }
 
     private func refreshAndRender() {
         let recent = store.recentSnapshots(since: Date().addingTimeInterval(-clusteringWindow))
         var contexts = ContextClusterer.cluster(recent)
+
+        // Prune contexts whose tab/window/app no longer actually exists — using the
+        // last full collection (not necessarily from this call) so a render triggered
+        // by something other than a poll tick still prunes correctly.
+        let openKeys = Set(lastFreshSnapshots.compactMap(ContextClusterer.key(for:)))
+        contexts = contexts.filter { context in
+            if openKeys.contains(context.id) { return true }
+            if context.id.hasPrefix("app:") {
+                // No collector enumerates "all open apps" every tick, so an app-fallback
+                // context is judged by whether the app is still running at all, not
+                // whether it was the last tick's frontmost app.
+                return NSWorkspace.shared.runningApplications.contains { $0.localizedName == context.app }
+            }
+            // A terminal/Safari context whose key wasn't in the last fresh collection
+            // means that specific tab/window no longer exists — drop it immediately
+            // rather than letting it linger for the rest of the history window.
+            return false
+        }
 
         // Apply any cached summaries we already have, then render immediately
         // so the menu updates with cheap labels before the network calls return.
@@ -118,11 +176,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishSummarizing(_ contextId: String, result: ClaudeSummarizer.Result?) {
         inFlightSummaries.remove(contextId)
         if let result {
-            fputs("Summarized \(contextId) -> \"\(result.name)\": \(result.summary)\n", stderr)
+            Log.write("Summarized \(contextId) -> \"\(result.name)\": \(result.summary)\n")
             summaryCache[contextId] = (result, Date())
-            refreshAndRender() // re-render with the fresh summary, no re-collection
+            refreshAndRender() // re-render with the fresh summary; still prunes via lastFreshSnapshots
         } else {
-            fputs("No summary for \(contextId)\n", stderr)
+            Log.write("No summary for \(contextId)\n")
         }
     }
 }

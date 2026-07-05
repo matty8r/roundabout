@@ -12,7 +12,7 @@ final class SnapshotStore {
         path = dir.appendingPathComponent("breadcrumbs.sqlite3").path
 
         if sqlite3_open(path, &db) != SQLITE_OK {
-            fputs("Failed to open db at \(path)\n", stderr)
+            Log.write("Failed to open db at \(path)\n")
         }
         createTableIfNeeded()
     }
@@ -41,7 +41,7 @@ final class SnapshotStore {
         var errMsg: UnsafeMutablePointer<Int8>?
         if sqlite3_exec(db, sql, nil, nil, &errMsg) != SQLITE_OK {
             let msg = errMsg.map { String(cString: $0) } ?? "unknown error"
-            fputs("Failed to create table: \(msg)\n", stderr)
+            Log.write("Failed to create table: \(msg)\n")
             sqlite3_free(errMsg)
         }
     }
@@ -67,7 +67,7 @@ final class SnapshotStore {
         sqlite3_bind_int(stmt, 10, snapshot.isActiveNow ? 1 : 0)
 
         if sqlite3_step(stmt) != SQLITE_DONE {
-            fputs("Insert failed: \(String(cString: sqlite3_errmsg(db)))\n", stderr)
+            Log.write("Insert failed: \(String(cString: sqlite3_errmsg(db)))\n")
         }
     }
 

@@ -98,7 +98,7 @@ enum SafariCollector {
         """
         let (output, errorOutput) = runProcessCapturingStderr("/usr/bin/osascript", ["-e", script])
         if let errorOutput, !errorOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            fputs("Safari page-content fetch failed — enable Safari's Develop menu \u{2192} \"Allow JavaScript from Apple Events\": \(errorOutput)\n", stderr)
+            Log.write("Safari page-content fetch failed — enable Safari's Develop menu \u{2192} \"Allow JavaScript from Apple Events\": \(errorOutput)\n")
             return nil
         }
         guard let output, !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }

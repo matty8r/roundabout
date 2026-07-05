@@ -79,7 +79,7 @@ enum ClaudeSummarizer {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 if let str = String(data: data, encoding: .utf8) {
-                    fputs("Claude API error (\(( response as? HTTPURLResponse)?.statusCode ?? -1)): \(str)\n", stderr)
+                    Log.write("Claude API error (\(( response as? HTTPURLResponse)?.statusCode ?? -1)): \(str)\n")
                 }
                 return nil
             }
@@ -96,7 +96,7 @@ enum ClaudeSummarizer {
             guard !decoded.name.isEmpty, !decoded.summary.isEmpty else { return nil }
             return decoded
         } catch {
-            fputs("Claude API request failed: \(error)\n", stderr)
+            Log.write("Claude API request failed: \(error)\n")
             return nil
         }
     }

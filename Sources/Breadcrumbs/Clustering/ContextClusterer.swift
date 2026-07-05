@@ -14,6 +14,21 @@ enum ContextClusterer {
         var representativeTimestamp: Date = .distantPast
     }
 
+    /// The clustering key for a single snapshot — exposed so callers can compute "is this
+    /// specific context still actually open right now" independent of the historical
+    /// clustering pass (see AppDelegate's existence-pruning against fresh per-tick snapshots).
+    static func key(for snapshot: Snapshot) -> String? {
+        if let url = snapshot.url, !url.isEmpty {
+            return url
+        } else if let cwd = snapshot.cwd, !cwd.isEmpty {
+            let process = snapshot.processName ?? "shell"
+            return "\(cwd)::\(process)"
+        } else if let app = snapshot.app {
+            return "app:\(app)"
+        }
+        return nil
+    }
+
     /// One context per (cwd, foreground process) for terminal snapshots, one per url
     /// for browser tabs — so an idle shell and an active Claude session in the same
     /// directory (or two different browser tabs) don't get merged into one entry.
@@ -22,20 +37,14 @@ enum ContextClusterer {
         var byKey: [String: Accumulator] = [:]
 
         for snapshot in snapshots {
-            let key: String
+            guard let key = key(for: snapshot) else { continue }
             let label: String
             if let url = snapshot.url, !url.isEmpty {
-                key = url
                 label = snapshot.title?.isEmpty == false ? snapshot.title! : url
             } else if let cwd = snapshot.cwd, !cwd.isEmpty {
-                let process = snapshot.processName ?? "shell"
-                key = "\(cwd)::\(process)"
                 label = (cwd as NSString).lastPathComponent
-            } else if let app = snapshot.app {
-                key = "app:\(app)"
-                label = app
             } else {
-                continue
+                label = snapshot.app ?? key
             }
 
             var entry = byKey[key] ?? Accumulator(cwd: snapshot.cwd, label: label, lastSeen: .distantPast)
