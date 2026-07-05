@@ -1,0 +1,4 @@
+.build/
+Breadcrumbs.app/
+.DS_Store
+.claude/settings.local.json
