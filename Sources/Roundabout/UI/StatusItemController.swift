@@ -19,6 +19,11 @@ final class StatusItemController {
     /// so clicking a row in the menu jumps to it exactly like selecting it in the overlay does.
     var onSelectContext: ((Context) -> Void)?
 
+    /// Set by AppDelegate to clear the summary cache and re-render immediately after the
+    /// user switches providers in the "Summarization" submenu below, rather than leaving
+    /// stale summaries from the old provider on screen until they age out of the cache.
+    var onSummarizerPreferenceChanged: (() -> Void)?
+
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let icon = Self.loadMenuBarIcon() {
@@ -85,10 +90,20 @@ final class StatusItemController {
 
         menu.addItem(.separator())
 
+        let helpItem = NSMenuItem(title: "How to Use Roundabout", action: #selector(showHelp), keyEquivalent: "")
+        helpItem.target = self
+        menu.addItem(helpItem)
+
+        menu.addItem(.separator())
+
         let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = LoginItemManager.isEnabled ? .on : .off
         menu.addItem(loginItem)
+
+        let summarizationItem = NSMenuItem(title: "Summarization", action: nil, keyEquivalent: "")
+        summarizationItem.submenu = makeSummarizationMenu()
+        menu.addItem(summarizationItem)
 
         let hasStoredKey = APIKeyStore.load() != nil
         let apiKeyItem = NSMenuItem(
@@ -106,6 +121,99 @@ final class StatusItemController {
 
         menu.addItem(NSMenuItem(title: "Quit Roundabout", action: #selector(quit), keyEquivalent: "q"))
         menu.items.last?.target = self
+    }
+
+    /// On-device (FoundationModels) is the default; Anthropic is there for anyone who wants
+    /// it anyway. A radio-button-style submenu rather than a single toggle since a third
+    /// provider (see CLAUDE.md's "Future possibilities" — a bundled local model, say) would
+    /// need more than two states.
+    private func makeSummarizationMenu() -> NSMenu {
+        let submenu = NSMenu()
+        let current = SummarizerPreferenceStore.current
+
+        let onDeviceItem = NSMenuItem(title: "On-Device (Apple Intelligence)", action: #selector(selectOnDeviceSummarizer), keyEquivalent: "")
+        onDeviceItem.target = self
+        onDeviceItem.state = current == .onDevice ? .on : .off
+        if let reason = FoundationModelsSummarizer.unavailableReason {
+            onDeviceItem.toolTip = reason
+        }
+        submenu.addItem(onDeviceItem)
+
+        let anthropicItem = NSMenuItem(title: "Anthropic Claude", action: #selector(selectAnthropicSummarizer), keyEquivalent: "")
+        anthropicItem.target = self
+        anthropicItem.state = current == .anthropic ? .on : .off
+        submenu.addItem(anthropicItem)
+
+        return submenu
+    }
+
+    @objc private func selectOnDeviceSummarizer() {
+        SummarizerPreferenceStore.current = .onDevice
+        onSummarizerPreferenceChanged?()
+        render(contexts: lastContexts)
+    }
+
+    @objc private func selectAnthropicSummarizer() {
+        SummarizerPreferenceStore.current = .anthropic
+        onSummarizerPreferenceChanged?()
+        render(contexts: lastContexts)
+    }
+
+    /// (heading, body) pairs for the help panel below. Plain NSAlert.informativeText is a
+    /// single unstyled String — no bold runs — so headers are built as their own bold
+    /// NSTextField instead, matching the title/summary text style ContextRowView already
+    /// uses elsewhere, and handed to the alert via accessoryView rather than informativeText.
+    private static let helpSections: [(heading: String, body: String)] = [
+        ("Option-Tab", "Hold Option, tap Tab to cycle contexts, release to jump — like Cmd-Tab, per tab."),
+        ("This menu", "Click any context above to jump straight to it."),
+        ("Summarization", "On-Device (default) or Anthropic Claude — a one-line AI summary of each context."),
+        ("Launch at Login", "Runs automatically from here on."),
+        ("Permissions", "Accessibility (for Option-Tab) and Automation for Terminal/Safari, requested on first use."),
+    ]
+
+    @objc private func showHelp() {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Roundabout"
+        alert.informativeText = "Jumps you back to your actual working context — not just an app, but the exact Terminal tab, Safari tab, or window — with one gesture."
+
+        let width: CGFloat = 300
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: width).isActive = true
+
+        for section in Self.helpSections {
+            let heading = NSTextField(labelWithString: section.heading)
+            heading.font = .boldSystemFont(ofSize: 12)
+
+            let body = NSTextField(wrappingLabelWithString: section.body)
+            body.font = .systemFont(ofSize: 12)
+            body.textColor = .secondaryLabelColor
+            body.preferredMaxLayoutWidth = width
+
+            let sectionStack = NSStackView(views: [heading, body])
+            sectionStack.orientation = .vertical
+            sectionStack.alignment = .leading
+            sectionStack.spacing = 2
+            stack.addArrangedSubview(sectionStack)
+        }
+
+        // NSAlert reads a custom accessoryView's *frame* synchronously when it's assigned,
+        // the same way NSMenu does for a custom NSMenuItem.view (see the context-row fix
+        // above) — it doesn't wait for a later Auto Layout pass. Skipping this leaves the
+        // stack at its initial .zero frame, and the alert's window ends up sized for that,
+        // so the accessory content overlaps the messageText/informativeText above it instead
+        // of appearing in its own space below them.
+        stack.layoutSubtreeIfNeeded()
+        stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
+
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func toggleLaunchAtLogin() {

@@ -5,9 +5,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItemController = StatusItemController()
     private var pollTimer: Timer?
 
-    private var summaryCache: [String: (result: ClaudeSummarizer.Result, cachedAt: Date)] = [:]
+    private var summaryCache: [String: (result: SummarizerResult, cachedAt: Date)] = [:]
     private let summaryTTL: TimeInterval = 5 * 60
     private var inFlightSummaries: Set<String> = []
+
+    private let claudeSummarizer = ClaudeSummarizer()
+    private let foundationModelsSummarizer = FoundationModelsSummarizer()
+
+    /// Resolved fresh on every call (not cached as a stored reference) so flipping the
+    /// status-bar menu's "Summarization" selection takes effect on the very next pass,
+    /// without needing a relaunch.
+    private var activeSummarizer: any Summarizer {
+        switch SummarizerPreferenceStore.current {
+        case .onDevice:
+            return foundationModelsSummarizer
+        case .anthropic:
+            return claudeSummarizer
+        }
+    }
 
     private let pollInterval: TimeInterval = 15
     private let clusteringWindow: TimeInterval = 30 * 60
@@ -32,6 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             ContextActivator.activate(context)
             self.markActivated(context)
+        }
+
+        // Switching summarization providers should be felt immediately, not after the
+        // existing 5-minute cache entries happen to expire.
+        statusItemController.onSummarizerPreferenceChanged = { [weak self] in
+            guard let self else { return }
+            self.summaryCache.removeAll()
+            self.refreshAndRender()
         }
 
         // Unconditional, so every launch — success or failure, manual or via login
@@ -158,7 +181,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for i in contexts.indices {
             if let cached = summaryCache[contexts[i].id], Date().timeIntervalSince(cached.cachedAt) < summaryTTL {
                 contexts[i].summary = cached.result.summary
-                contexts[i].label = cached.result.name
+                // Terminal contexts keep the stable "<dir> — Claude" label ContextClusterer
+                // already gave them — only the summary should change as work progresses, so
+                // there's a consistent header to recognize the context by. Safari contexts
+                // still adopt the AI-generated name: there it's specifically there to
+                // disambiguate same-titled tabs, which needs the visible title to actually change.
+                if contexts[i].cwd == nil {
+                    contexts[i].label = cached.result.name
+                }
             }
         }
         statusItemController.render(contexts: contexts)
@@ -182,18 +212,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // summarization is keyed by directory, so an idle shell sharing a cwd with an
                 // active session would otherwise inherit that session's (misleading) summary.
                 inFlightSummaries.insert(context.id)
+                let summarizer = activeSummarizer // resolved once per request, not inside the Task —
+                // a mid-flight provider switch shouldn't change which backend a request finishes with.
                 Task { [weak self] in
                     guard let self else { return }
-                    let result = await ClaudeSummarizer.summarize(cwd: cwd, label: context.label)
+                    let result = await summarizer.summarize(cwd: cwd, label: context.label)
                     await self.finishSummarizing(context.id, result: result)
                 }
             } else if let url = context.url, (safariLabelCounts[context.label] ?? 0) > 1 {
                 inFlightSummaries.insert(context.id)
+                let summarizer = activeSummarizer
                 Task { [weak self] in
                     guard let self else { return }
-                    var summarized: ClaudeSummarizer.Result?
+                    var summarized: SummarizerResult?
                     if let pageText = SafariCollector.fetchPageText(forURL: url) {
-                        summarized = await ClaudeSummarizer.summarizeWebPage(title: context.label, excerpt: pageText)
+                        summarized = await summarizer.summarizeWebPage(title: context.label, excerpt: pageText)
                     }
                     await self.finishSummarizing(context.id, result: summarized)
                 }
@@ -202,7 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func finishSummarizing(_ contextId: String, result: ClaudeSummarizer.Result?) {
+    private func finishSummarizing(_ contextId: String, result: SummarizerResult?) {
         inFlightSummaries.remove(contextId)
         if let result {
             Log.write("Summarized \(contextId) -> \"\(result.name)\": \(result.summary)\n")

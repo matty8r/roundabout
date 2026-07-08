@@ -42,7 +42,13 @@ enum ContextClusterer {
             if let url = snapshot.url, !url.isEmpty {
                 label = snapshot.title?.isEmpty == false ? snapshot.title! : url
             } else if let cwd = snapshot.cwd, !cwd.isEmpty {
-                label = (cwd as NSString).lastPathComponent
+                let dirName = (cwd as NSString).lastPathComponent
+                // A claude session gets a stable "<dir> — Claude" label here specifically so
+                // AppDelegate.refreshAndRender() can leave it alone once a summary arrives —
+                // only .summary should update as the AI re-describes what's happening; the
+                // header itself needs to stay put as something to visually grab onto, rather
+                // than reflecting whatever 2-4 word name the model picked for this round.
+                label = snapshot.processName == "claude" ? "\(dirName) — Claude" : dirName
             } else {
                 label = snapshot.app ?? key
             }

@@ -1,40 +1,22 @@
 import Foundation
 
-enum ClaudeSummarizer {
-    struct Result: Decodable {
+/// Summarization backend using the Anthropic Messages API — opt-in via the status-bar
+/// menu's "Summarization" submenu. FoundationModelsSummarizer (on-device) is the default;
+/// this one is for anyone who wants it anyway (higher-quality summaries, no on-device model
+/// download) and doesn't mind the cloud round-trip and API key.
+struct ClaudeSummarizer: Summarizer {
+    private struct APIResult: Decodable {
         let name: String
         let summary: String
     }
 
-    /// Summarizes a working context using recent Claude Code transcript text, if any
-    /// exists for this cwd. Returns nil (caller keeps the cheap directory-name label)
-    /// when there's no API key or no transcript to summarize from.
-    static func summarize(cwd: String, label: String) async -> Result? {
+    func summarize(cwd: String, label: String) async -> SummarizerResult? {
         guard let excerpt = TranscriptReader.excerpt(forCWD: cwd) else { return nil }
-        let prompt = """
-        Here is a recent excerpt from a coding session in directory "\(label)":
-
-        \(excerpt)
-
-        Give this working context a short human-readable name and a one-sentence summary of what's currently being worked on.
-        """
-        return await requestSummary(prompt: prompt)
+        return await requestSummary(prompt: SummarizerPrompts.terminal(label: label, excerpt: excerpt))
     }
 
-    /// Summarizes a browser tab from its visible page text. Used only when a tab's title
-    /// collides with another open tab's (e.g. several generic same-named app tabs), since
-    /// that's the case where the title alone can't tell them apart.
-    static func summarizeWebPage(title: String, excerpt: String) async -> Result? {
-        let prompt = """
-        Here is the title and visible text content of a browser tab titled "\(title)":
-
-        \(excerpt)
-
-        This tab's title is shared by other open tabs, so give it a short, distinct name and a
-        one-sentence summary of what's specifically happening on this page — something that would
-        help someone tell it apart from the other same-titled tabs.
-        """
-        return await requestSummary(prompt: prompt)
+    func summarizeWebPage(title: String, excerpt: String) async -> SummarizerResult? {
+        await requestSummary(prompt: SummarizerPrompts.webPage(title: title, excerpt: excerpt))
     }
 
     /// Keychain first — this is what makes summarization work when launched as a login
@@ -42,14 +24,14 @@ enum ClaudeSummarizer {
     /// the environment. Environment variable as a fallback so the dev-loop workflow
     /// (`source .env` before launching from a shell) keeps working without also requiring
     /// a Keychain entry.
-    private static func resolveAPIKey() -> String? {
+    private func resolveAPIKey() -> String? {
         if let stored = APIKeyStore.load(), !stored.isEmpty {
             return stored
         }
         return ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
     }
 
-    private static func requestSummary(prompt: String) async -> Result? {
+    private func requestSummary(prompt: String) async -> SummarizerResult? {
         guard let apiKey = resolveAPIKey(), !apiKey.isEmpty else {
             return nil
         }
@@ -102,11 +84,11 @@ enum ClaudeSummarizer {
                   let textData = text.data(using: .utf8)
             else { return nil }
 
-            guard let decoded = try? JSONDecoder().decode(Result.self, from: textData) else { return nil }
+            guard let decoded = try? JSONDecoder().decode(APIResult.self, from: textData) else { return nil }
             // An empty name/summary is a "success" by schema but useless in the UI —
             // treat it the same as no result so the cheap label fallback stays visible.
             guard !decoded.name.isEmpty, !decoded.summary.isEmpty else { return nil }
-            return decoded
+            return SummarizerResult(name: decoded.name, summary: decoded.summary)
         } catch {
             Log.write("Claude API request failed: \(error)\n")
             return nil
