@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Breadcrumbs",
+    name: "Roundabout",
     platforms: [.macOS(.v26)],
     targets: [
         .executableTarget(
-            name: "Breadcrumbs",
-            path: "Sources/Breadcrumbs",
+            name: "Roundabout",
+            path: "Sources/Roundabout",
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]

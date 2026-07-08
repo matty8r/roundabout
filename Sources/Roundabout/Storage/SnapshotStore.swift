@@ -7,9 +7,9 @@ final class SnapshotStore {
 
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Breadcrumbs", isDirectory: true)
+            .appendingPathComponent("Roundabout", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        path = dir.appendingPathComponent("breadcrumbs.sqlite3").path
+        path = dir.appendingPathComponent("roundabout.sqlite3").path
 
         if sqlite3_open(path, &db) != SQLITE_OK {
             Log.write("Failed to open db at \(path)\n")

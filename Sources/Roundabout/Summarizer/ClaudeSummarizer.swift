@@ -37,8 +37,20 @@ enum ClaudeSummarizer {
         return await requestSummary(prompt: prompt)
     }
 
+    /// Keychain first — this is what makes summarization work when launched as a login
+    /// item, since that launch path has no shell and never sees `ANTHROPIC_API_KEY` from
+    /// the environment. Environment variable as a fallback so the dev-loop workflow
+    /// (`source .env` before launching from a shell) keeps working without also requiring
+    /// a Keychain entry.
+    private static func resolveAPIKey() -> String? {
+        if let stored = APIKeyStore.load(), !stored.isEmpty {
+            return stored
+        }
+        return ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
+    }
+
     private static func requestSummary(prompt: String) async -> Result? {
-        guard let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !apiKey.isEmpty else {
+        guard let apiKey = resolveAPIKey(), !apiKey.isEmpty else {
             return nil
         }
 

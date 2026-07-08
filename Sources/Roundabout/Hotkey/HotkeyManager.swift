@@ -39,7 +39,7 @@ final class HotkeyManager {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            Log.write("Failed to create event tap — check Accessibility permission for Breadcrumbs\n")
+            Log.write("Failed to create event tap — check Accessibility permission for Roundabout\n")
             return
         }
 

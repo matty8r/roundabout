@@ -1,6 +1,6 @@
 import ServiceManagement
 
-/// Wraps SMAppService so Breadcrumbs can register itself to launch at login —
+/// Wraps SMAppService so Roundabout can register itself to launch at login —
 /// the modern replacement for a ~/Library/LaunchAgents plist or a manual drag into
 /// System Settings > Login Items. Requires the running app to be code-signed
 /// (ad-hoc signing, as scripts/build_app.sh does, is sufficient).
@@ -19,7 +19,7 @@ enum LoginItemManager {
             if enabled {
                 try SMAppService.mainApp.register()
                 if SMAppService.mainApp.status == .requiresApproval {
-                    Log.write("Breadcrumbs is registered to launch at login but needs approval — opening System Settings.\n")
+                    Log.write("Roundabout is registered to launch at login but needs approval — opening System Settings.\n")
                     SMAppService.openSystemSettingsLoginItems()
                 }
             } else {

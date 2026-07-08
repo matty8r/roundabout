@@ -7,9 +7,9 @@ import Foundation
 enum Log {
     private static let fileHandle: FileHandle? = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Breadcrumbs", isDirectory: true)
+            .appendingPathComponent("Roundabout", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let path = dir.appendingPathComponent("breadcrumbs.log")
+        let path = dir.appendingPathComponent("roundabout.log")
         if !FileManager.default.fileExists(atPath: path.path) {
             FileManager.default.createFile(atPath: path.path, contents: nil)
         }

@@ -6,6 +6,15 @@ import AppKit
 final class ContextRowView: NSView {
     private let highlightLayer = CALayer()
     private let accentColor: NSColor
+    private var trackingArea: NSTrackingArea?
+
+    /// Set by callers that want this row to be clickable (currently only
+    /// StatusItemController's status-bar dropdown — the Option-Tab switcher panel sets
+    /// `ignoresMouseEvents = true` on its whole window, so these never fire there, and
+    /// leaving this nil there is enough to keep the row inert). When set, the row hover-
+    /// highlights (reusing `setSelected`, the same highlight the switcher drives via the
+    /// keyboard) and a click invokes it and dismisses the enclosing menu.
+    var onSelect: (() -> Void)?
 
     init(context: Context, minHeight: CGFloat, width: CGFloat) {
         accentColor = context.accentColor
@@ -81,6 +90,38 @@ final class ContextRowView: NSView {
 
     func setSelected(_ selected: Bool) {
         highlightLayer.backgroundColor = selected ? accentColor.withAlphaComponent(0.22).cgColor : NSColor.clear.cgColor
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard onSelect != nil else { return }
+        setSelected(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard onSelect != nil else { return }
+        setSelected(false)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let onSelect else {
+            super.mouseDown(with: event)
+            return
+        }
+        // enclosingMenuItem is exactly the hook AppKit provides for a custom NSMenuItem.view
+        // to close its own menu — cancelTracking() dismisses the dropdown immediately,
+        // before activating the target context, so the menu doesn't linger on top of it.
+        enclosingMenuItem?.menu?.cancelTracking()
+        onSelect()
     }
 
     private static func icon(forAppNamed name: String) -> NSImage? {

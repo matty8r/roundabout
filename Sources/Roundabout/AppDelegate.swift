@@ -26,17 +26,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
+        // Clicking a context row in the status-bar dropdown jumps to it exactly like
+        // selecting it in the Option-Tab overlay does — same activate + recency-bump pair.
+        statusItemController.onSelectContext = { [weak self] context in
+            guard let self else { return }
+            ContextActivator.activate(context)
+            self.markActivated(context)
+        }
+
         // Unconditional, so every launch — success or failure, manual or via login
         // item — leaves durable evidence of what happened. Without this, a launch
         // that hits no error path (the common case) writes nothing at all, which
         // makes "did it even start" indistinguishable from "log file doesn't exist yet."
         let trusted = HotkeyManager.ensureAccessibilityPermission()
-        Log.write("Breadcrumbs launched (pid \(ProcessInfo.processInfo.processIdentifier)); accessibility trusted = \(trusted)\n")
+        Log.write("Roundabout launched (pid \(ProcessInfo.processInfo.processIdentifier)); accessibility trusted = \(trusted)\n")
 
         if trusted {
             setUpHotkey()
         } else {
-            Log.write("Accessibility permission not yet granted — grant it in System Settings, then relaunch Breadcrumbs.\n")
+            Log.write("Accessibility permission not yet granted — grant it in System Settings, then relaunch Roundabout.\n")
         }
 
         // 15s polling alone can miss an app you only glance at briefly (open it, do
@@ -55,10 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func appActivated(_ notification: Notification) {
         // .regular excludes system/background agents — see FrontmostAppCollector's
-        // comment on the same filter for the poll path.
+        // comment on the same filter for the poll path. Terminal/Safari are excluded for
+        // the same reason FrontmostAppCollector excludes them: they have dedicated
+        // collectors already, so a generic snapshot here would just create a redundant
+        // "app:Terminal"/"app:Safari" context alongside the real tab-specific one.
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               app.activationPolicy == .regular,
-              let name = app.localizedName else { return }
+              let name = app.localizedName,
+              !FrontmostAppCollector.isCoveredByDedicatedCollector(name) else { return }
         store.insert(Snapshot(
             source: "frontmost", app: name, title: nil, cwd: nil, tty: nil,
             timestamp: Date(), isActiveNow: true
@@ -79,9 +91,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, self.switcher.isVisible else { return }
             if let selected = self.switcher.commitAndHide() {
                 ContextActivator.activate(selected)
+                self.markActivated(selected)
             }
         }
         hotkeyManager.start()
+    }
+
+    /// Marks a context as just-activated so switcher ordering reflects it immediately,
+    /// rather than waiting for the next 15s poll (or, for Terminal/Safari, indefinitely —
+    /// appActivated doesn't track them; see FrontmostAppCollector). Without this, a quick
+    /// single Option-Tab tap — mirroring Cmd-Tab's "jump straight back to what I was just
+    /// in" gesture — wouldn't reliably ping-pong on a second tap: `latestContexts` would
+    /// still show the context we just left as "most recent", since nothing else updates
+    /// its lastSeen until the next poll notices it's frontmost again.
+    private func markActivated(_ context: Context) {
+        store.insert(Snapshot(
+            source: "activation", app: context.app, title: nil, cwd: context.cwd, tty: context.tty,
+            timestamp: Date(), isFrontmostTab: true, processName: context.processName, url: context.url,
+            isActiveNow: true
+        ))
+        refreshAndRender()
     }
 
     private func tick() {
