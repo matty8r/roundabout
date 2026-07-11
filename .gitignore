@@ -1,5 +1,6 @@
 .build/
 Roundabout.app/
+*.dmg
 .DS_Store
 .claude/settings.local.json
 .env

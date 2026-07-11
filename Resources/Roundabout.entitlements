@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Not sandboxed: Roundabout needs to send Apple Events to Terminal/Safari
+         (AppleScript automation) and use Accessibility (CGEventTap), neither of
+         which is compatible with the App Sandbox. Hardened Runtime (required for
+         notarization) is independent of sandboxing, but it does disable sending
+         Apple Events by default unless this entitlement is present alongside
+         Info.plist's NSAppleEventsUsageDescription. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

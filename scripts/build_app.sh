@@ -51,7 +51,20 @@ done
 iconutil -c icns "${ICONSET_DIR}" -o "${APP_PATH}/Contents/Resources/${APP_NAME}.icns"
 rm -rf "$(dirname "${ICONSET_DIR}")"
 
-echo "Ad-hoc signing..."
-codesign --force --deep --sign - "${APP_PATH}"
+if [ "${CONFIG}" = "release" ]; then
+    # Ad-hoc signing (used for debug below) has no stable Team ID, so Gatekeeper/TCC
+    # treat every rebuild as a new identity — fine for the inner dev loop, but
+    # distribution needs a real identity: Developer ID + Hardened Runtime + a secure
+    # timestamp are all mandatory prerequisites for notarization (see scripts/release.sh,
+    # which drives this CONFIG=release path and then notarizes/staples the result).
+    echo "Signing with Developer ID (release)..."
+    codesign --force --options runtime --timestamp \
+        --sign "Developer ID Application: Matthew Silas (CG3Q63736Q)" \
+        --entitlements "Resources/Roundabout.entitlements" \
+        "${APP_PATH}"
+else
+    echo "Ad-hoc signing..."
+    codesign --force --deep --sign - "${APP_PATH}"
+fi
 
 echo "Done: ${APP_PATH}"
