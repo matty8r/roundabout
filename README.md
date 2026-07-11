@@ -15,13 +15,14 @@ Cmd-Tab switches between apps. If you spend your day in one Terminal window with
 - **Option-Tab / Option-Shift-Tab** — a Liquid-Glass overlay switcher that cycles through your recent contexts and jumps straight back into the selected one on release, mirroring Cmd-Tab's gesture.
 - **Per-tab awareness** for Terminal (tracks cwd + foreground process, so an idle shell and an active `claude` session in the same directory are distinct contexts) and Safari (tracks URL + title).
 - **Menu-bar dropdown** showing your current contexts — click any row to jump to it directly, no keyboard required.
-- **Optional AI-generated summaries**: a one-line description of what you're actually doing in a context (e.g. summarizing what a Claude Code session is working on, or disambiguating several same-titled browser tabs), powered by the Anthropic API.
+- **AI-generated summaries**: a one-line description of what you're actually doing in a context (e.g. summarizing what a Claude Code session is working on, or a Safari tab's page content). Runs **on-device by default** via Apple Intelligence (`FoundationModels`) — free, private, nothing leaves your Mac, no API key needed. Anthropic's Claude API is available as an opt-in alternative for higher-quality summaries, switchable anytime from the menu bar.
 - **Runs as a login item** — set it and forget it; no need to launch it by hand each session.
 
 ## Requirements
 
 - macOS 26 or later (uses `NSGlassEffectView` for real Liquid Glass, and `SMAppService` for login-item registration)
-- A Swift 6.2+ toolchain to build from source (Xcode 26+, or the corresponding Swift toolchain)
+- Apple Silicon + Apple Intelligence enabled, for the default on-device summarization. On a Mac that doesn't support Apple Intelligence, Roundabout still works fully — you'd just switch to the Anthropic option (or go without summaries) from the menu bar.
+- A Swift 6.2+ toolchain to build from source (Xcode 26+, or the corresponding Swift toolchain) — only needed if building from source; see [Installing](#installing) for the prebuilt download.
 
 ## Building
 
@@ -37,11 +38,13 @@ To actually run it, package it as a proper `.app` bundle — macOS won't reliabl
 ./scripts/build_app.sh [debug|release]   # defaults to debug
 ```
 
-This assembles `Roundabout.app`, generates the app icon from `Resources/AppIcon.svg`, and ad-hoc signs the bundle.
+This assembles `Roundabout.app` and generates the app icon from `Resources/AppIcon.svg`. Debug builds are ad-hoc signed (fast, no certificate needed); `release` builds are signed with a Developer ID certificate and Hardened Runtime, ready for notarization (see `scripts/release.sh` and `CLAUDE.md`'s Distribution section).
 
 ## Installing
 
-Copy the built app into `/Applications` and launch it:
+**Easiest: download the prebuilt app.** Grab the latest signed & notarized `.dmg` from [branchesthreads.com/roundabout](https://branchesthreads.com/roundabout) or directly from [GitHub Releases](https://github.com/matty8r/roundabout/releases/latest), open it, and drag Roundabout into Applications. No Gatekeeper warning to click through — it's properly signed and notarized by Apple.
+
+**Building from source instead:** copy the app you built above into `/Applications` and launch it:
 
 ```sh
 rm -rf /Applications/Roundabout.app
@@ -49,18 +52,22 @@ cp -R Roundabout.app /Applications/Roundabout.app
 open /Applications/Roundabout.app
 ```
 
-On first launch it will prompt for:
+Either way, on first launch it will prompt for:
 
 - **Accessibility** — required for the global Option-Tab hotkey to work at all.
 - **Automation** (Terminal, then Safari) — required the first time each app's tabs are enumerated via AppleScript.
 
-Look for the roundabout-sign icon in your menu bar once it's running. From that menu you can also turn on **Launch at Login** so it starts automatically going forward.
+Both take effect immediately once granted — no need to quit and relaunch. Look for the roundabout-sign icon in your menu bar once it's running. From that menu you can also turn on **Launch at Login** so it starts automatically going forward.
 
-> Because the app is ad-hoc signed (no paid Developer ID), macOS may ask you to re-grant Accessibility/Automation permissions after rebuilding — this is expected and not a bug.
+> If you're building `debug` configs from source yourself, note that ad-hoc signing has no stable identity, so macOS may ask you to re-grant Accessibility/Automation permissions after rebuilding — expected, not a bug. This doesn't affect the downloaded, notarized release build above.
 
-## AI-generated summaries (optional)
+## AI-generated summaries
 
-To enable short, LLM-generated descriptions of what you're working on in each context, click the menu bar icon → **Set Anthropic API Key…** and paste in an API key from the [Anthropic Console](https://console.anthropic.com/settings/keys). The key is stored in the macOS Keychain, so it works regardless of how the app was launched (including as a login item). Without a key, Roundabout still works fully — contexts just use their cheap default label (directory name, page title, or app name) instead of a generated summary.
+Roundabout generates a one-line description of what you're actually doing in each context. **On-device via Apple Intelligence is the default** — free, private (nothing leaves your Mac), and requires no setup or API key, as long as your Mac supports Apple Intelligence.
+
+If you'd like higher-quality summaries and don't mind context leaving your device, switch to **Anthropic Claude** from the menu bar (Summarization submenu), then click **Set Anthropic API Key…** and paste in a key from the [Anthropic Console](https://console.anthropic.com/settings/keys). The key is stored in the macOS Keychain, so it works regardless of how the app was launched (including as a login item). Switching providers takes effect immediately, no relaunch needed.
+
+Without Apple Intelligence available and no Anthropic key set, Roundabout still works fully — contexts just use their cheap default label (directory name, page title, or app name) instead of a generated summary.
 
 ## How it works
 
@@ -72,6 +79,5 @@ There's no test target — verification is done live, by checking the durable lo
 
 Not yet implemented, but plausible next steps:
 
-- On-device summarization via Apple's `FoundationModels` framework, as a free/private alternative to the Claude API
 - Chrome/Arc support alongside Safari
 - iTerm2 support alongside Terminal.app
