@@ -47,6 +47,15 @@ final class ContextRowView: NSView {
         titleField.lineBreakMode = .byTruncatingTail
         titleField.textColor = .labelColor
 
+        // Domain is cheap/mechanical (parsed straight from the URL, no AI involved) and shown
+        // whenever this is a browser context — unlike summary below, it doesn't need to wait
+        // on an async result, so a Safari row reads title/domain immediately, summary once
+        // it's ready.
+        let domainField = NSTextField(labelWithString: context.domain ?? "")
+        domainField.font = .systemFont(ofSize: 11)
+        domainField.textColor = .tertiaryLabelColor
+        domainField.isHidden = context.domain == nil
+
         let summaryField = NSTextField(wrappingLabelWithString: context.summary ?? "")
         summaryField.font = .systemFont(ofSize: 11)
         summaryField.textColor = .secondaryLabelColor
@@ -57,8 +66,9 @@ final class ContextRowView: NSView {
         let textWidth = width - (12 + 8 + 10 + 24 + 10 + 12)
         summaryField.preferredMaxLayoutWidth = textWidth
         titleField.preferredMaxLayoutWidth = textWidth
+        domainField.preferredMaxLayoutWidth = textWidth
 
-        let textStack = NSStackView(views: [titleField, summaryField])
+        let textStack = NSStackView(views: [titleField, domainField, summaryField])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2

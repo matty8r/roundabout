@@ -34,4 +34,12 @@ struct Context: Identifiable {
         let hue = CGFloat(abs(hash) % 360) / 360.0
         return NSColor(calibratedHue: hue, saturation: 0.55, brightness: 0.9, alpha: 1.0)
     }
+
+    /// Cheap, non-AI-generated context for a browser tab — the bare domain (no "www."),
+    /// shown as a second line under the title so a Safari row reads title/domain/summary
+    /// even before any AI summary exists. nil for non-browser contexts.
+    var domain: String? {
+        guard let url, let host = URL(string: url)?.host else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
 }

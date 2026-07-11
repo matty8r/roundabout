@@ -56,7 +56,16 @@ enum TerminalCollector {
         set AppleScript's text item delimiters to linefeed
         return outputLines as text
         """
-        guard let output = runProcess("/usr/bin/osascript", ["-e", script]) else { return [] }
+        let (output, errorOutput) = runProcessCapturingStderr("/usr/bin/osascript", ["-e", script])
+        if let errorOutput, !errorOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Most commonly a missing/denied Automation permission for Terminal — that
+            // failure was previously silent (stderr discarded), which is exactly what
+            // made a fresh install's "no Terminal contexts ever appear, no clue why" bug
+            // undiagnosable. See SafariCollector's identical comment.
+            Log.write("Terminal tab enumeration failed — check Automation permission for Terminal in System Settings: \(errorOutput)\n")
+            return []
+        }
+        guard let output else { return [] }
         return output
             .split(separator: "\n")
             .compactMap { line -> TabInfo? in
@@ -135,5 +144,28 @@ enum TerminalCollector {
         process.waitUntilExit()
         let data = outPipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8)
+    }
+
+    /// Only used for the AppleScript call, which — unlike the ps/lsof calls above — can
+    /// fail for a diagnosable, user-fixable reason (missing Automation permission), so
+    /// its stderr is worth surfacing rather than discarding like the plain runProcess above.
+    private static func runProcessCapturingStderr(_ executable: String, _ arguments: [String]) -> (String?, String?) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+        } catch {
+            return (nil, nil)
+        }
+        process.waitUntilExit()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        return (String(data: outData, encoding: .utf8), String(data: errData, encoding: .utf8))
     }
 }

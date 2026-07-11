@@ -61,7 +61,18 @@ enum SafariCollector {
         set AppleScript's text item delimiters to linefeed
         return outputLines as text
         """
-        guard let output = runProcess("/usr/bin/osascript", ["-e", script]) else { return [] }
+        let (output, errorOutput) = runProcessCapturingStderr("/usr/bin/osascript", ["-e", script])
+        if let errorOutput, !errorOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Most commonly a missing/denied Automation permission for Safari — that
+            // failure was previously silent (stderr discarded), which is exactly what
+            // made a fresh install's "no Safari contexts ever appear, no clue why" bug
+            // undiagnosable. Logged every tick rather than once, same as the summarizer's
+            // "No summary for X" — cheap, and the alternative (tracking whether we've
+            // already warned) isn't worth it for a condition the user should just fix.
+            Log.write("Safari tab enumeration failed — check Automation permission for Safari in System Settings: \(errorOutput)\n")
+            return []
+        }
+        guard let output else { return [] }
         return output
             .split(separator: "\n")
             .compactMap { line -> TabInfo? in
@@ -123,23 +134,5 @@ enum SafariCollector {
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
         let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
         return (String(data: outData, encoding: .utf8), String(data: errData, encoding: .utf8))
-    }
-
-    private static func runProcess(_ executable: String, _ arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let outPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = Pipe() // discard stderr
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        process.waitUntilExit()
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)
     }
 }

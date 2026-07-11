@@ -23,6 +23,15 @@ final class HotkeyManager {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    /// Plain trust check, no prompt — used by AppDelegate to poll for the permission being
+    /// granted *after* a launch that found it missing, so the user doesn't have to quit and
+    /// relaunch once they flip the switch in System Settings. Repeatedly calling
+    /// ensureAccessibilityPermission() instead would needlessly re-trigger the system's
+    /// permission dialog/Dock-bounce on every poll.
+    static func isAccessibilityTrusted() -> Bool {
+        AXIsProcessTrusted()
+    }
+
     func start() {
         let eventMask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)

@@ -24,5 +24,7 @@
     <string>26.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Roundabout reads open Terminal and Safari tabs (via AppleScript) to track your working contexts and jump back to them.</string>
 </dict>
 </plist>

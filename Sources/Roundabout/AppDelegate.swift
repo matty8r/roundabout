@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SnapshotStore()
     private let statusItemController = StatusItemController()
     private var pollTimer: Timer?
+    private var accessibilityPollTimer: Timer?
 
     private var summaryCache: [String: (result: SummarizerResult, cachedAt: Date)] = [:]
     private let summaryTTL: TimeInterval = 5 * 60
@@ -67,7 +68,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if trusted {
             setUpHotkey()
         } else {
-            Log.write("Accessibility permission not yet granted — grant it in System Settings, then relaunch Roundabout.\n")
+            Log.write("Accessibility permission not yet granted — waiting for it to be granted in System Settings (no relaunch needed once you do).\n")
+            waitForAccessibilityPermission()
         }
 
         // 15s polling alone can miss an app you only glance at briefly (open it, do
@@ -118,6 +120,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         hotkeyManager.start()
+    }
+
+    /// Accessibility trust is normally only checked once, at launch — if it's missing then,
+    /// the hotkey silently never starts, and previously the only way to pick up a permission
+    /// grant made afterward was to quit and relaunch. This polls until AXIsProcessTrusted()
+    /// goes true and starts the hotkey right then, so granting it in System Settings while
+    /// Roundabout is already running is enough on its own. (Ad-hoc signing can still mean the
+    /// System Settings toggle doesn't visibly "take" until the existing entry is removed and
+    /// re-added rather than just switched on — see CLAUDE.md's Packaging section — but once it
+    /// does take, this notices within a couple of seconds instead of requiring a relaunch.)
+    private func waitForAccessibilityPermission() {
+        accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            guard HotkeyManager.isAccessibilityTrusted() else { return }
+            timer.invalidate()
+            self.accessibilityPollTimer = nil
+            Log.write("Accessibility permission granted while running — starting hotkey now.\n")
+            self.setUpHotkey()
+        }
     }
 
     /// Marks a context as just-activated so switcher ordering reflects it immediately,
@@ -194,14 +215,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItemController.render(contexts: contexts)
         latestContexts = contexts
 
-        // A Safari tab's title is only worth spending an API call on when it collides
-        // with another open tab's title — e.g. several generic same-named app tabs
-        // (Krea, ChatGPT, ...) that the cheap label can't tell apart.
-        var safariLabelCounts: [String: Int] = [:]
-        for context in contexts where context.url != nil {
-            safariLabelCounts[context.label, default: 0] += 1
-        }
-
         // Kick off async summarization for anything stale/uncached, one at a time per key.
         for context in contexts {
             let isStale = summaryCache[context.id].map { Date().timeIntervalSince($0.cachedAt) >= summaryTTL } ?? true
@@ -219,7 +232,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let result = await summarizer.summarize(cwd: cwd, label: context.label)
                     await self.finishSummarizing(context.id, result: result)
                 }
-            } else if let url = context.url, (safariLabelCounts[context.label] ?? 0) > 1 {
+            } else if let url = context.url {
+                // Every Safari tab gets summarized now, not just ones whose title collides
+                // with another open tab's — on-device summarization (the default) is free,
+                // so there's no cost reason left to hold back, and the extra context (domain
+                // + one-line summary) is useful even for an already-distinguishable tab.
                 inFlightSummaries.insert(context.id)
                 let summarizer = activeSummarizer
                 Task { [weak self] in
