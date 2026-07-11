@@ -52,4 +52,14 @@ hdiutil create -volname "${APP_NAME}" -srcfolder "${STAGING}" -ov -format UDZO "
 echo "== Verifying Gatekeeper acceptance =="
 spctl --assess --type execute --verbose "${APP_PATH}"
 
-echo "Done: ${DMG_NAME}"
+# A second, version-agnostic copy so the download link on branchesthreads.com can point at
+# /releases/latest/download/Roundabout.dmg forever — GitHub's "latest" redirect resolves by
+# release recency, but the asset *filename* in that URL must be identical release to release,
+# which a version-embedded name like Roundabout-0.1.dmg can't provide on its own.
+cp "${DMG_NAME}" "${APP_NAME}.dmg"
+
+echo "Done: ${DMG_NAME} (plus ${APP_NAME}.dmg, a copy for the stable /releases/latest/download/ URL)"
+echo ""
+echo "To publish this release:"
+echo "  git tag v${VERSION} && git push origin v${VERSION}"
+echo "  gh release create v${VERSION} ${DMG_NAME} ${APP_NAME}.dmg --repo matty8r/roundabout --title \"Roundabout ${VERSION}\" --notes \"...\""
