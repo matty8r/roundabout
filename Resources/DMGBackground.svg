@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 400">
+  <!-- DMG installer background: rendered at 660x400px (1:1, not 2x) via sips in
+       scripts/release.sh and shown in a 660x400-point Finder window (see the AppleScript in
+       release.sh for exact window bounds and icon positions) — Finder draws a DMG background
+       image at native pixel size rather than scale-fitting it to the window, so a 2x image
+       would render twice the intended size and throw off the icon-drop-zone alignment below.
+       Full-strength sky-to-grass gradient, the same two stop colors as AppIcon.svg's own
+       background (not a light tint over white, as an earlier version used) — directly
+       matches the app icon rather than just hinting at its palette. The arrow below is white
+       rather than the app icon's own dark blue for contrast against this bolder background;
+       Finder draws its own light backing behind each icon's name label regardless of the
+       background image, so the "Roundabout"/"Applications" text stays legible on top of it. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7DCCF2"/>
+      <stop offset="100%" stop-color="#5EB762"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="660" height="400" fill="url(#bg)"/>
+
+  <!-- Arrow, centered in the gap between the two icon-drop-zones: icon centers are at
+       x=180/x=480 (see release.sh's AppleScript), midpoint x=330 — the arrow's own
+       horizontal midpoint (shaft start to chevron tip) needs to land on that same x=330,
+       which is easy to get wrong by eyeballing the path coordinates rather than computing
+       it (an earlier version was centered at x=305, visibly left of the true gap).
+       Vertically centered at y=190 to match the icons' own vertical center exactly (an
+       earlier version used y=180, ten points higher than the icons, which read as "too
+       high"). A plain chevron rather than the app icon's own arrow motif, so it reads as
+       generic "drag this way" instruction rather than a second logo. Shaft ends exactly
+       where the chevron's back corners are, so the chevron's tip is the true leading edge
+       of the whole arrow, not sitting partway along an over-long line. -->
+  <g fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.85">
+    <path d="M 330,165 L 365,190 L 330,215"/>
+    <path d="M 295,190 L 330,190"/>
+  </g>
+</svg>
