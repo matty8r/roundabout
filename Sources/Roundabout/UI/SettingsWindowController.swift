@@ -377,6 +377,9 @@ private final class AppToggleRowView: NSTableCellView {
         nameField.font = .systemFont(ofSize: 13)
         nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         toggle.translatesAutoresizingMaskIntoConstraints = false
+        // .regular (the default) renders noticeably larger than the switches System Settings
+        // uses in its own per-app lists — .small matches that convention.
+        toggle.controlSize = .small
         toggle.target = self
         toggle.action = #selector(toggleChanged)
 
@@ -385,7 +388,7 @@ private final class AppToggleRowView: NSTableCellView {
         addSubview(toggle)
 
         NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 22),
             iconView.heightAnchor.constraint(equalToConstant: 22),
@@ -394,7 +397,11 @@ private final class AppToggleRowView: NSTableCellView {
             nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
             nameField.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -8),
 
-            toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            // -16, not the row's raw edge: .inset table style draws its rounded-rect row
+            // background inset from the row's actual bounds, so content sitting only a few
+            // points from that raw edge visually crowds/crosses the background's rounded
+            // corner instead of sitting cleanly inside it.
+            toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             toggle.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
