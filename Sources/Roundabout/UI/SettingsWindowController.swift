@@ -388,7 +388,9 @@ private final class AppToggleRowView: NSTableCellView {
         addSubview(toggle)
 
         NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            // 2, not the earlier 14 — that sat noticeably right of the section header/
+            // description text above, which has no equivalent extra indent of its own.
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 22),
             iconView.heightAnchor.constraint(equalToConstant: 22),
