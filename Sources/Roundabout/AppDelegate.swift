@@ -199,8 +199,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Apply any cached summaries we already have, then render immediately
         // so the menu updates with cheap labels before the network calls return.
+        // No TTL check here (unlike the isStale check below, which still uses one) —
+        // Safari summaries now only refresh when a tab is genuinely active (see below),
+        // so a background tab you haven't revisited in a while would otherwise have its
+        // summary silently vanish from the display past summaryTTL even though nothing
+        // about it is actually known to be wrong; the last-known summary is strictly
+        // better than reverting to the cheap default label for a tab we simply haven't
+        // had a chance to re-check.
         for i in contexts.indices {
-            if let cached = summaryCache[contexts[i].id], Date().timeIntervalSince(cached.cachedAt) < summaryTTL {
+            if let cached = summaryCache[contexts[i].id] {
                 contexts[i].summary = cached.result.summary
                 // Terminal contexts keep the stable "<dir> — Claude" label ContextClusterer
                 // already gave them — only the summary should change as work progresses, so
@@ -232,23 +239,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let result = await summarizer.summarize(cwd: cwd, label: context.label)
                     await self.finishSummarizing(context.id, result: result)
                 }
-            } else if let url = context.url {
-                // Every Safari tab gets summarized now, not just ones whose title collides
-                // with another open tab's — on-device summarization (the default) is free,
-                // so there's no cost reason left to hold back, and the extra context (domain
-                // + one-line summary) is useful even for an already-distinguishable tab.
+            } else if let url = context.url, isSafariTabCurrentlyActive(url: url) {
+                // Only the genuinely active tab gets (re-)summarized — not every open one.
+                // This isn't a cost cutback, it's a hard capability boundary: page text now
+                // comes from Accessibility (SafariCollector.fetchActiveTabText), which can
+                // only ever see whatever's actually rendered on screen right now. A
+                // background tab that isn't the one currently selected/visible in its window
+                // has no live content to read at all — browsers don't paint, or keep a
+                // materialized accessibility tree for, tabs that aren't on screen. So a
+                // context only gets summarized at the moment you're actually looking at it;
+                // the cached result then keeps showing (see the no-TTL display loop above)
+                // after you switch away, same as before.
                 inFlightSummaries.insert(context.id)
                 let summarizer = activeSummarizer
                 Task { [weak self] in
                     guard let self else { return }
                     var summarized: SummarizerResult?
-                    if let pageText = SafariCollector.fetchPageText(forURL: url) {
+                    if let pageText = SafariCollector.fetchActiveTabText(forURL: url) {
                         summarized = await summarizer.summarizeWebPage(title: context.label, excerpt: pageText)
                     }
                     await self.finishSummarizing(context.id, result: summarized)
                 }
             }
         }
+    }
+
+    /// Backs the Safari summarization gate above — Accessibility-based text capture only
+    /// works for a tab that's genuinely on screen right now, so this checks the most recent
+    /// snapshot collection (not the clustered Context, which has no per-tick liveness flag)
+    /// for one matching this URL with isActiveNow true.
+    private func isSafariTabCurrentlyActive(url: String) -> Bool {
+        lastFreshSnapshots.contains { $0.source == "safari" && $0.url == url && $0.isActiveNow }
     }
 
     @MainActor

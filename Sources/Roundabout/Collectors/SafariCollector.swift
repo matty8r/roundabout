@@ -87,10 +87,34 @@ enum SafariCollector {
             }
     }
 
-    /// Fetches the visible text of a specific tab (matched by URL) via `do JavaScript`.
-    /// Requires the user to enable Safari's Develop menu → "Allow JavaScript from Apple
-    /// Events" — without it this fails and we log a hint once rather than silently no-op.
-    static func fetchPageText(forURL url: String, maxCharacters: Int = 4000) -> String? {
+    /// Fetches page text for the tab at `url`, which the caller must already know is the
+    /// genuinely active/on-screen Safari tab (see `AppDelegate.isSafariTabCurrentlyActive`)
+    /// — Accessibility can only ever read what's actually rendered right now, so calling
+    /// this for a background tab would just fail (harmlessly) and fall through to the
+    /// static-source fallback below, which is strictly worse. Was previously `do JavaScript`
+    /// (`document.body.innerText`), which needed the user to enable Safari's Develop menu →
+    /// "Allow JavaScript from Apple Events" — a separate, easy-to-miss, per-machine setting
+    /// that was the actual root cause of a real user's "summaries don't work on my other
+    /// Mac" report. Accessibility needs no extra setup at all (Roundabout already requires
+    /// it for the hotkey) and — unlike a `source`-only approach tried and rejected first —
+    /// correctly sees JS-rendered content, confirmed empty (`source`) vs. populated
+    /// (Accessibility) against a real claude.ai chat tab during development.
+    static func fetchActiveTabText(forURL url: String, maxCharacters: Int = 4000) -> String? {
+        if let axText = AccessibilityTextReader.fetchVisibleText(bundleIdentifier: "com.apple.Safari", maxCharacters: maxCharacters),
+           axText.count > 40 {
+            return axText
+        }
+        return fetchPageTextViaSource(forURL: url, maxCharacters: maxCharacters)
+    }
+
+    /// Cheap fallback for the rare page with sparse/poor accessibility support: Safari's
+    /// plain `source` property (raw HTML), converted to visible text locally with
+    /// `NSAttributedString`'s HTML importer. Gated by Automation alone (already required
+    /// for `fetchTabs` above) — but reads the page's *initial* HTML, not the live DOM, so
+    /// it silently returns nothing useful for JS-rendered single-page apps (confirmed via a
+    /// real claude.ai tab: 15KB of source, 0 characters of extracted text). That gap is why
+    /// this is only a fallback now, not the primary path — see `fetchActiveTabText` above.
+    private static func fetchPageTextViaSource(forURL url: String, maxCharacters: Int) -> String? {
         let escapedURL = url.replacingOccurrences(of: "\\", with: "\\\\")
                              .replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
@@ -99,7 +123,7 @@ enum SafariCollector {
                 repeat with t in tabs of w
                     try
                         if (URL of t) is "\(escapedURL)" then
-                            return do JavaScript "document.body.innerText.substring(0, \(maxCharacters))" in t
+                            return source of t
                         end if
                     end try
                 end repeat
@@ -109,19 +133,24 @@ enum SafariCollector {
         """
         let (output, errorOutput) = runProcessCapturingStderr("/usr/bin/osascript", ["-e", script])
         if let errorOutput, !errorOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            Log.write("Safari page-content fetch failed — enable Safari's Develop menu \u{2192} \"Allow JavaScript from Apple Events\": \(errorOutput)\n")
+            Log.write("Safari page-content fetch failed — check Automation permission for Safari in System Settings: \(errorOutput)\n")
             return nil
         }
-        guard let output, !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            // Empty output with no stderr is exactly what happens when "Allow JavaScript
-            // from Apple Events" is off — `do JavaScript` doesn't throw an OSA error in that
-            // case, it just quietly returns nothing, so this branch was previously silent
-            // and indistinguishable from "no matching tab" or "genuinely blank page." Logged
-            // every attempt (not just once) since summarization retries every poll tick.
-            Log.write("Safari page-content fetch returned nothing for \(url) — check Safari's Develop menu \u{2192} \"Allow JavaScript from Apple Events\" is enabled (Develop menu itself must first be turned on in Safari Settings \u{2192} Advanced).\n")
+        guard let output, let data = output.data(using: .utf8), !data.isEmpty else {
+            Log.write("Safari page-content fetch returned nothing for \(url) (no tab currently has this exact URL, or the page is genuinely empty).\n")
             return nil
         }
-        return output
+        guard let attributed = try? NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
+            documentAttributes: nil
+        ) else {
+            Log.write("Safari page-content fetch: couldn't parse HTML for \(url)\n")
+            return nil
+        }
+        let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return String(text.prefix(maxCharacters))
     }
 
     private static func runProcessCapturingStderr(_ executable: String, _ arguments: [String]) -> (String?, String?) {
