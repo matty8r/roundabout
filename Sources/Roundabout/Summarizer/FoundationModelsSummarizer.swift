@@ -53,6 +53,10 @@ struct FoundationModelsSummarizer: Summarizer {
         await requestSummary(prompt: SummarizerPrompts.webPage(title: title, excerpt: excerpt))
     }
 
+    func summarizeAppContent(appName: String, excerpt: String) async -> SummarizerResult? {
+        await requestSummary(prompt: SummarizerPrompts.appContent(appName: appName, excerpt: excerpt))
+    }
+
     private func requestSummary(prompt: String) async -> SummarizerResult? {
         guard Self.isAvailable else { return nil }
         do {

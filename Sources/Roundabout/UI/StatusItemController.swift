@@ -24,6 +24,10 @@ final class StatusItemController {
     /// stale summaries from the old provider on screen until they age out of the cache.
     var onSummarizerPreferenceChanged: (() -> Void)?
 
+    /// Set by AppDelegate to show (creating on first use) the per-app summarization
+    /// Settings window.
+    var onOpenSettings: (() -> Void)?
+
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let icon = Self.loadMenuBarIcon() {
@@ -105,6 +109,10 @@ final class StatusItemController {
         summarizationItem.submenu = makeSummarizationMenu()
         menu.addItem(summarizationItem)
 
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         let hasStoredKey = APIKeyStore.load() != nil
         let apiKeyItem = NSMenuItem(
             title: hasStoredKey ? "Anthropic API Key: Set ✓" : "Set Anthropic API Key…",
@@ -157,6 +165,10 @@ final class StatusItemController {
         SummarizerPreferenceStore.current = .anthropic
         onSummarizerPreferenceChanged?()
         render(contexts: lastContexts)
+    }
+
+    @objc private func openSettings() {
+        onOpenSettings?()
     }
 
     /// (heading, body) pairs for the help panel below. Plain NSAlert.informativeText is a

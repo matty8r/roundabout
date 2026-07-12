@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var latestContexts: [Context] = []
     private let hotkeyManager = HotkeyManager()
     private let switcher = SwitcherWindowController()
+    private var settingsWindowController: SettingsWindowController?
 
     // The most recent full collection, used to prune closed tabs/apps on *every*
     // render — not just the render that did the collecting. Without this, a render
@@ -56,6 +57,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.summaryCache.removeAll()
             self.refreshAndRender()
+        }
+
+        // Lazily create the Settings window once, then just show/refresh it on repeat opens
+        // (isReleasedWhenClosed = false on its NSWindow keeps the controller instance valid
+        // across close/reopen). refresh() rebuilds the app list each time, since which apps
+        // are running can change between opens.
+        statusItemController.onOpenSettings = { [weak self] in
+            guard let self else { return }
+            let controller: SettingsWindowController
+            if let existing = self.settingsWindowController {
+                controller = existing
+                controller.refresh()
+            } else {
+                controller = SettingsWindowController()
+                self.settingsWindowController = controller
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            controller.showWindow(nil)
+            controller.window?.makeKeyAndOrderFront(nil)
         }
 
         // Unconditional, so every launch — success or failure, manual or via login
@@ -260,8 +280,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     await self.finishSummarizing(context.id, result: summarized)
                 }
+            } else if context.cwd == nil, context.url == nil, isAppContextCurrentlyActive(context) {
+                // Generic apps (anything other than Terminal/Safari, which have their own
+                // dedicated paths above) get summarized the same way Safari does — only when
+                // genuinely active, via Accessibility, since that's the only data source
+                // available and it can only ever see what's on screen right now (see
+                // AccessibilityTextReader). Gated by AppSummarizationPreferenceStore, which
+                // excludes a small default blacklist (password managers, Messages, Mail)
+                // unless the user explicitly opts a given app back in via the Settings window.
+                guard let bundleIdentifier = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == context.app })?.bundleIdentifier,
+                      AppSummarizationPreferenceStore.isEnabled(bundleIdentifier: bundleIdentifier) else {
+                    continue
+                }
+                inFlightSummaries.insert(context.id)
+                let summarizer = activeSummarizer
+                let appName = context.app
+                Task { [weak self] in
+                    guard let self else { return }
+                    var summarized: SummarizerResult?
+                    if let text = AccessibilityTextReader.fetchVisibleText(bundleIdentifier: bundleIdentifier) {
+                        summarized = await summarizer.summarizeAppContent(appName: appName, excerpt: text)
+                    }
+                    await self.finishSummarizing(context.id, result: summarized)
+                }
             }
         }
+    }
+
+    /// Backs the generic app-summarization gate above — unlike Safari (tab-level activeness
+    /// needs the collector's isActiveNow), "is this app currently active" is just "is it the
+    /// system's frontmost app," which NSWorkspace already knows instantly and authoritatively.
+    private func isAppContextCurrentlyActive(_ context: Context) -> Bool {
+        NSWorkspace.shared.frontmostApplication?.localizedName == context.app
     }
 
     /// Backs the Safari summarization gate above — Accessibility-based text capture only

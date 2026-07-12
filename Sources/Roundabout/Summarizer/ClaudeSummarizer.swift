@@ -19,6 +19,10 @@ struct ClaudeSummarizer: Summarizer {
         await requestSummary(prompt: SummarizerPrompts.webPage(title: title, excerpt: excerpt))
     }
 
+    func summarizeAppContent(appName: String, excerpt: String) async -> SummarizerResult? {
+        await requestSummary(prompt: SummarizerPrompts.appContent(appName: appName, excerpt: excerpt))
+    }
+
     /// Keychain first — this is what makes summarization work when launched as a login
     /// item, since that launch path has no shell and never sees `ANTHROPIC_API_KEY` from
     /// the environment. Environment variable as a fallback so the dev-loop workflow
