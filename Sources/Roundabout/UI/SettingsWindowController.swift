@@ -15,12 +15,13 @@ final class SettingsWindowController: NSWindowController {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Roundabout Settings"
+        window.minSize = NSSize(width: 460, height: 420)
         window.center()
         window.isReleasedWhenClosed = false // AppDelegate retains this controller across show/hide, not just first open
         self.init(window: window)
@@ -39,12 +40,26 @@ final class SettingsWindowController: NSWindowController {
     private func buildContent() {
         guard let window else { return }
 
+        // Every section except the last resists stretching (.required vertical hugging) so
+        // the extra space a taller/resized window creates all goes to the one section that
+        // should actually use it — the app list. Without this, NSStackView's .fill
+        // distribution has no basis to prefer one arranged subview over another and the
+        // extra space either goes nowhere (bottomAnchor left as <=, the previous behavior:
+        // the window just had dead space below a fixed-height list) or gets distributed
+        // ambiguously across everything.
+        let generalSection = makeGeneralSection()
+        let summarizationSection = makeSummarizationSection()
+        let appSummarizationSection = makeAppSummarizationSection()
+        for section in [generalSection, summarizationSection] {
+            section.setContentHuggingPriority(.required, for: .vertical)
+        }
+
         let sections: [NSView] = [
-            makeGeneralSection(),
+            generalSection,
             Self.makeDivider(),
-            makeSummarizationSection(),
+            summarizationSection,
             Self.makeDivider(),
-            makeAppSummarizationSection(),
+            appSummarizationSection,
         ]
 
         let contentStack = NSStackView(views: sections)
@@ -54,13 +69,15 @@ final class SettingsWindowController: NSWindowController {
         contentStack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         contentStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 620))
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 640))
         contentView.addSubview(contentStack)
         NSLayoutConstraint.activate([
             contentStack.topAnchor.constraint(equalTo: contentView.topAnchor),
             contentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             contentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
+            // Equal, not <=: forces the stack to occupy the full content view height, which
+            // is what gives the low-hugging-priority app list something to expand into.
+            contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
         window.contentView = contentView
     }
@@ -206,6 +223,7 @@ final class SettingsWindowController: NSWindowController {
             table.headerView = nil
             table.backgroundColor = .clear
             table.selectionHighlightStyle = .none
+            table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
             let column = NSTableColumn(identifier: .init("app"))
             column.width = Self.contentWidth
             table.addTableColumn(column)
@@ -218,11 +236,24 @@ final class SettingsWindowController: NSWindowController {
             let scrollView = NSScrollView()
             scrollView.documentView = table
             scrollView.hasVerticalScroller = true
+            // Overlay (thin, floats on top, auto-hides) rather than whatever the system-wide
+            // default resolves to — a mouse-connected machine defaults to "legacy," a
+            // persistent scroller that reserves real width from the clip view. That reserved
+            // width doesn't shrink this table's already-laid-out column, so switches (anchored
+            // to the row view's trailing edge, which tracks column width) ended up rendering
+            // partway behind the scroller track. Overlay-style takes no layout space at all,
+            // sidestepping the mismatch entirely rather than trying to precisely compute and
+            // subtract a scroller width from the column.
+            scrollView.scrollerStyle = .overlay
             scrollView.borderType = .noBorder
             scrollView.drawsBackground = false
             scrollView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
-            scrollView.heightAnchor.constraint(equalToConstant: 240).isActive = true
+            // A minimum, not a fixed height — this view is the one that should absorb
+            // whatever extra vertical space the window has (see buildContent()'s hugging
+            // priority comment), rather than staying pinned to a constant.
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
+            scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
             listView = scrollView
         }
 
@@ -230,6 +261,9 @@ final class SettingsWindowController: NSWindowController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
+        // header keeps its intrinsic size; listView (the scroll view, when there are apps)
+        // is the low-hugging-priority view that should stretch — see above.
+        header.setContentHuggingPriority(.required, for: .vertical)
         return stack
     }
 
