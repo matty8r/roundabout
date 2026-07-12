@@ -112,7 +112,15 @@ enum SafariCollector {
             Log.write("Safari page-content fetch failed — enable Safari's Develop menu \u{2192} \"Allow JavaScript from Apple Events\": \(errorOutput)\n")
             return nil
         }
-        guard let output, !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard let output, !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            // Empty output with no stderr is exactly what happens when "Allow JavaScript
+            // from Apple Events" is off — `do JavaScript` doesn't throw an OSA error in that
+            // case, it just quietly returns nothing, so this branch was previously silent
+            // and indistinguishable from "no matching tab" or "genuinely blank page." Logged
+            // every attempt (not just once) since summarization retries every poll tick.
+            Log.write("Safari page-content fetch returned nothing for \(url) — check Safari's Develop menu \u{2192} \"Allow JavaScript from Apple Events\" is enabled (Develop menu itself must first be turned on in Safari Settings \u{2192} Advanced).\n")
+            return nil
+        }
         return output
     }
 
