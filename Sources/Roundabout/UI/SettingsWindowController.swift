@@ -218,7 +218,15 @@ final class SettingsWindowController: NSWindowController {
             listView = empty
         } else {
             let table = NSTableView()
-            table.style = .inset
+            // .plain, not .inset — .inset applies its own automatic content padding on top
+            // of whatever margin the row view itself defines (that's the "grouped box" look,
+            // e.g. System Settings' Notifications per-app list), which stacked with
+            // AppToggleRowView's own leading constant to leave icons sitting well right of
+            // the header text above, and wasn't controllable by adjusting that constant alone.
+            // .plain has no such built-in inset, so the row view's own constraints are the
+            // only thing determining its layout — directly matching the header text is then
+            // just a matter of using the same leading constant as everything else.
+            table.style = .plain
             table.rowHeight = 36
             table.headerView = nil
             table.backgroundColor = .clear
