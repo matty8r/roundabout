@@ -9,9 +9,6 @@ final class StatusItemController {
     private static let rowMinHeight: CGFloat = 36
     private static let rowWidth: CGFloat = 300
 
-    // Retained so the API-key menu items can trigger a full re-render (their title/presence
-    // depends on whether a key is currently stored) without AppDelegate having to re-supply
-    // the last context list just to refresh the Keychain-related rows.
     private var lastContexts: [Context] = []
 
     /// Set by AppDelegate to activate a context when its dropdown row is clicked — mirrors
@@ -19,13 +16,9 @@ final class StatusItemController {
     /// so clicking a row in the menu jumps to it exactly like selecting it in the overlay does.
     var onSelectContext: ((Context) -> Void)?
 
-    /// Set by AppDelegate to clear the summary cache and re-render immediately after the
-    /// user switches providers in the "Summarization" submenu below, rather than leaving
-    /// stale summaries from the old provider on screen until they age out of the cache.
-    var onSummarizerPreferenceChanged: (() -> Void)?
-
-    /// Set by AppDelegate to show (creating on first use) the per-app summarization
-    /// Settings window.
+    /// Set by AppDelegate to show (creating on first use) the Settings window — Launch at
+    /// Login, Summarization provider/API key, and per-app summarization all live there now
+    /// rather than in this menu (see SettingsWindowController).
     var onOpenSettings: (() -> Void)?
 
     init() {
@@ -100,71 +93,12 @@ final class StatusItemController {
 
         menu.addItem(.separator())
 
-        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        loginItem.target = self
-        loginItem.state = LoginItemManager.isEnabled ? .on : .off
-        menu.addItem(loginItem)
-
-        let summarizationItem = NSMenuItem(title: "Summarization", action: nil, keyEquivalent: "")
-        summarizationItem.submenu = makeSummarizationMenu()
-        menu.addItem(summarizationItem)
-
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        let hasStoredKey = APIKeyStore.load() != nil
-        let apiKeyItem = NSMenuItem(
-            title: hasStoredKey ? "Anthropic API Key: Set ✓" : "Set Anthropic API Key…",
-            action: #selector(setAPIKey), keyEquivalent: ""
-        )
-        apiKeyItem.target = self
-        menu.addItem(apiKeyItem)
-
-        if hasStoredKey {
-            let clearItem = NSMenuItem(title: "Clear Anthropic API Key", action: #selector(clearAPIKey), keyEquivalent: "")
-            clearItem.target = self
-            menu.addItem(clearItem)
-        }
-
         menu.addItem(NSMenuItem(title: "Quit Roundabout", action: #selector(quit), keyEquivalent: "q"))
         menu.items.last?.target = self
-    }
-
-    /// On-device (FoundationModels) is the default; Anthropic is there for anyone who wants
-    /// it anyway. A radio-button-style submenu rather than a single toggle since a third
-    /// provider (see CLAUDE.md's "Future possibilities" — a bundled local model, say) would
-    /// need more than two states.
-    private func makeSummarizationMenu() -> NSMenu {
-        let submenu = NSMenu()
-        let current = SummarizerPreferenceStore.current
-
-        let onDeviceItem = NSMenuItem(title: "On-Device (Apple Intelligence)", action: #selector(selectOnDeviceSummarizer), keyEquivalent: "")
-        onDeviceItem.target = self
-        onDeviceItem.state = current == .onDevice ? .on : .off
-        if let reason = FoundationModelsSummarizer.unavailableReason {
-            onDeviceItem.toolTip = reason
-        }
-        submenu.addItem(onDeviceItem)
-
-        let anthropicItem = NSMenuItem(title: "Anthropic Claude", action: #selector(selectAnthropicSummarizer), keyEquivalent: "")
-        anthropicItem.target = self
-        anthropicItem.state = current == .anthropic ? .on : .off
-        submenu.addItem(anthropicItem)
-
-        return submenu
-    }
-
-    @objc private func selectOnDeviceSummarizer() {
-        SummarizerPreferenceStore.current = .onDevice
-        onSummarizerPreferenceChanged?()
-        render(contexts: lastContexts)
-    }
-
-    @objc private func selectAnthropicSummarizer() {
-        SummarizerPreferenceStore.current = .anthropic
-        onSummarizerPreferenceChanged?()
-        render(contexts: lastContexts)
     }
 
     @objc private func openSettings() {
@@ -178,8 +112,7 @@ final class StatusItemController {
     private static let helpSections: [(heading: String, body: String)] = [
         ("Option-Tab", "Hold Option, tap Tab to cycle contexts, release to jump — like Cmd-Tab, per tab."),
         ("This menu", "Click any context above to jump straight to it."),
-        ("Summarization", "On-Device (default) or Anthropic Claude — a one-line AI summary of each context."),
-        ("Launch at Login", "Runs automatically from here on."),
+        ("Settings", "Summarization provider, Launch at Login, and per-app permissions all live in Settings… (⌘,)."),
         ("Permissions", "Accessibility (for Option-Tab) and Automation for Terminal/Safari, requested on first use."),
     ]
 
@@ -226,46 +159,6 @@ final class StatusItemController {
         alert.addButton(withTitle: "OK")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
-    }
-
-    @objc private func toggleLaunchAtLogin() {
-        LoginItemManager.setEnabled(!LoginItemManager.isEnabled)
-        // Re-read status rather than assuming success (e.g. requiresApproval, or a failure).
-        menu.items.first(where: { $0.action == #selector(toggleLaunchAtLogin) })?.state =
-            LoginItemManager.isEnabled ? .on : .off
-    }
-
-    // Stored in the Keychain (see APIKeyStore) rather than relying on the process
-    // environment — a login-item launch has no shell and never sees ANTHROPIC_API_KEY set
-    // that way, which otherwise leaves summarization silently disabled with no indication why.
-    @objc private func setAPIKey() {
-        let alert = NSAlert()
-        alert.messageText = "Anthropic API Key"
-        alert.informativeText = "Used for LLM-generated context summaries. Stored in the macOS Keychain, so it's available no matter how Roundabout is launched."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-
-        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.placeholderString = "sk-ant-..."
-        alert.accessoryView = field
-
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        if APIKeyStore.save(key) {
-            Log.write("Anthropic API key saved to Keychain.\n")
-        } else {
-            Log.write("Failed to save Anthropic API key to Keychain — see preceding error.\n")
-        }
-        render(contexts: lastContexts)
-    }
-
-    @objc private func clearAPIKey() {
-        APIKeyStore.clear()
-        Log.write("Anthropic API key cleared from Keychain.\n")
-        render(contexts: lastContexts)
     }
 
     @objc private func quit() {

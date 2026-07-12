@@ -1,21 +1,21 @@
 import AppKit
 
-/// Roundabout's first real preferences window — everything else lives in the status-bar
-/// menu, but a per-app on/off list is exactly the kind of feature that outgrows a menu (see
-/// CLAUDE.md's note on Apple's HIG guidance for when to graduate from menu items to a
-/// Settings window: a list whose length depends on how many apps you run doesn't fit a
-/// fixed-size dropdown well).
-///
-/// Lists currently-running regular apps (not a historical "every app you've ever used" list)
-/// — Roundabout only ever stores an app's display *name* in its snapshot history, not its
-/// bundle identifier, so a not-currently-running app has no reliable way to resolve the
-/// bundle identifier AppSummarizationPreferenceStore keys on. Simplicity here (only apps
-/// currently running when you open Settings) beats a fragile name-based lookup for
-/// historical entries.
+/// Roundabout's one preferences window — General, Summarization, and per-app summarization
+/// access all live here now, instead of being spread across the status-bar menu (see
+/// CLAUDE.md's note on Apple's HIG guidance for when to graduate from menu items to a real
+/// Settings window: a per-app list whose length depends on how many apps you run, plus a
+/// provider choice and an API key field, is well past that threshold).
 final class SettingsWindowController: NSWindowController {
+    private static let contentWidth: CGFloat = 420
+
+    /// Set by AppDelegate to clear the summary cache and re-render immediately after the
+    /// user switches providers, rather than leaving stale summaries from the old provider
+    /// on screen until they age out of the cache.
+    var onSummarizerPreferenceChanged: (() -> Void)?
+
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -27,8 +27,11 @@ final class SettingsWindowController: NSWindowController {
         buildContent()
     }
 
-    /// Rebuilds the app list from scratch — called each time the window is shown, since the
-    /// set of running apps (and thus what's eligible to configure) can change between opens.
+    /// Rebuilds the whole window content from scratch — called both when AppDelegate shows
+    /// the window (the set of running apps can change between opens) and internally whenever
+    /// a control changes something that affects what else should be visible (e.g. picking
+    /// Anthropic reveals the API key row). Rebuilding is simpler and plenty fast for a
+    /// preferences window with a few dozen rows at most — no need for incremental diffing.
     func refresh() {
         buildContent()
     }
@@ -36,68 +39,203 @@ final class SettingsWindowController: NSWindowController {
     private func buildContent() {
         guard let window else { return }
 
-        let headerLabel = NSTextField(wrappingLabelWithString:
-            "Roundabout can read on-screen text from other apps (via Accessibility) to generate a one-line AI summary of what you're doing there. A few sensitive categories are off by default — toggle any app below to change it.")
-        headerLabel.font = .systemFont(ofSize: 12)
-        headerLabel.textColor = .secondaryLabelColor
-        headerLabel.preferredMaxLayoutWidth = 380
+        let sections: [NSView] = [
+            makeGeneralSection(),
+            Self.makeDivider(),
+            makeSummarizationSection(),
+            Self.makeDivider(),
+            makeAppSummarizationSection(),
+        ]
 
-        let listStack = NSStackView()
-        listStack.orientation = .vertical
-        listStack.alignment = .leading
-        listStack.spacing = 2
-        listStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let apps = Self.eligibleApps()
-        if apps.isEmpty {
-            let empty = NSTextField(labelWithString: "No other apps running right now.")
-            empty.font = .systemFont(ofSize: 12)
-            empty.textColor = .tertiaryLabelColor
-            listStack.addArrangedSubview(empty)
-        } else {
-            for app in apps {
-                guard let bundleIdentifier = app.bundleIdentifier else { continue }
-                listStack.addArrangedSubview(makeRow(app: app, bundleIdentifier: bundleIdentifier))
-            }
-        }
-
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .noBorder
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        // documentView must be wrapped so the stack's width tracks the scroll view's clip
-        // view rather than shrinking to its content's minimal width.
-        let clipContainer = NSView()
-        clipContainer.translatesAutoresizingMaskIntoConstraints = false
-        clipContainer.addSubview(listStack)
-        NSLayoutConstraint.activate([
-            listStack.topAnchor.constraint(equalTo: clipContainer.topAnchor),
-            listStack.leadingAnchor.constraint(equalTo: clipContainer.leadingAnchor),
-            listStack.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor),
-            listStack.bottomAnchor.constraint(lessThanOrEqualTo: clipContainer.bottomAnchor),
-        ])
-        scrollView.documentView = clipContainer
-
-        let contentStack = NSStackView(views: [headerLabel, scrollView])
+        let contentStack = NSStackView(views: sections)
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 12
-        contentStack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        contentStack.spacing = 16
+        contentStack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         contentStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 480))
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 620))
         contentView.addSubview(contentStack)
         NSLayoutConstraint.activate([
             contentStack.topAnchor.constraint(equalTo: contentView.topAnchor),
             contentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             contentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            headerLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            clipContainer.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
         ])
         window.contentView = contentView
     }
+
+    // MARK: - Section builders
+
+    private static func makeSectionHeader(_ title: String, description: String? = nil) -> NSView {
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .boldSystemFont(ofSize: 13)
+
+        guard let description else { return heading }
+        let body = NSTextField(wrappingLabelWithString: description)
+        body.font = .systemFont(ofSize: 11)
+        body.textColor = .secondaryLabelColor
+        body.preferredMaxLayoutWidth = contentWidth
+
+        let stack = NSStackView(views: [heading, body])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        return stack
+    }
+
+    private static func makeDivider() -> NSView {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
+        return box
+    }
+
+    /// A single-row preference: title/description on the left, an arbitrary trailing
+    /// control on the right, pinned to the row's trailing edge regardless of title length —
+    /// the label stack's low horizontal hugging priority is what lets it stretch to push the
+    /// control over, rather than the control just sitting immediately after a short title.
+    private static func makePreferenceRow(title: String, description: String? = nil, control: NSView) -> NSView {
+        let titleField = NSTextField(labelWithString: title)
+        titleField.font = .systemFont(ofSize: 13)
+
+        var labelViews: [NSView] = [titleField]
+        if let description {
+            let body = NSTextField(wrappingLabelWithString: description)
+            body.font = .systemFont(ofSize: 11)
+            body.textColor = .secondaryLabelColor
+            body.preferredMaxLayoutWidth = contentWidth - 100
+            labelViews.append(body)
+        }
+        let labelStack = NSStackView(views: labelViews)
+        labelStack.orientation = .vertical
+        labelStack.alignment = .leading
+        labelStack.spacing = 2
+        labelStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [labelStack, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
+        return row
+    }
+
+    private func makeGeneralSection() -> NSView {
+        let loginToggle = NSSwitch()
+        loginToggle.state = LoginItemManager.isEnabled ? .on : .off
+        loginToggle.target = self
+        loginToggle.action = #selector(loginToggleChanged(_:))
+
+        let row = Self.makePreferenceRow(
+            title: "Launch at Login",
+            description: "Start Roundabout automatically when you log in.",
+            control: loginToggle
+        )
+
+        let stack = NSStackView(views: [Self.makeSectionHeader("General"), row])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        return stack
+    }
+
+    private func makeSummarizationSection() -> NSView {
+        let provider = SummarizerPreferenceStore.current
+
+        let segmented = NSSegmentedControl(labels: ["On-Device", "Anthropic"], trackingMode: .selectOne, target: self, action: #selector(providerChanged(_:)))
+        segmented.selectedSegment = provider == .onDevice ? 0 : 1
+
+        let providerRow = Self.makePreferenceRow(
+            title: "Summarize contexts using",
+            description: "A one-line AI description of what's happening in each context.",
+            control: segmented
+        )
+
+        var rows: [NSView] = [Self.makeSectionHeader("Summarization"), providerRow]
+
+        if provider == .onDevice, let reason = FoundationModelsSummarizer.unavailableReason {
+            let warning = NSTextField(wrappingLabelWithString: "⚠️ \(reason)")
+            warning.font = .systemFont(ofSize: 11)
+            warning.textColor = .secondaryLabelColor
+            warning.preferredMaxLayoutWidth = Self.contentWidth
+            rows.append(warning)
+        }
+
+        if provider == .anthropic {
+            rows.append(makeAPIKeyRow())
+        }
+
+        let stack = NSStackView(views: rows)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        return stack
+    }
+
+    private func makeAPIKeyRow() -> NSView {
+        let hasStoredKey = APIKeyStore.load() != nil
+        let button = NSButton(title: hasStoredKey ? "Clear Key" : "Set Key…", target: self, action: #selector(apiKeyButtonClicked))
+        button.bezelStyle = .rounded
+        return Self.makePreferenceRow(
+            title: "Anthropic API Key",
+            description: hasStoredKey ? "Set — stored in the macOS Keychain." : "Required for the Anthropic provider.",
+            control: button
+        )
+    }
+
+    private func makeAppSummarizationSection() -> NSView {
+        let header = Self.makeSectionHeader(
+            "App Summarization",
+            description: "Roundabout can read on-screen text from other apps (via Accessibility) to summarize what you're doing there. A few sensitive categories are off by default."
+        )
+
+        let apps = Self.eligibleApps()
+        let listView: NSView
+        if apps.isEmpty {
+            let empty = NSTextField(labelWithString: "No other apps running right now.")
+            empty.font = .systemFont(ofSize: 12)
+            empty.textColor = .tertiaryLabelColor
+            listView = empty
+        } else {
+            let table = NSTableView()
+            table.style = .inset
+            table.rowHeight = 36
+            table.headerView = nil
+            table.backgroundColor = .clear
+            table.selectionHighlightStyle = .none
+            let column = NSTableColumn(identifier: .init("app"))
+            column.width = Self.contentWidth
+            table.addTableColumn(column)
+
+            let dataSource = AppListDataSource(apps: apps)
+            table.dataSource = dataSource
+            table.delegate = dataSource
+            self.appListDataSource = dataSource // retained — NSTableView holds its data source/delegate weakly
+
+            let scrollView = NSScrollView()
+            scrollView.documentView = table
+            scrollView.hasVerticalScroller = true
+            scrollView.borderType = .noBorder
+            scrollView.drawsBackground = false
+            scrollView.translatesAutoresizingMaskIntoConstraints = false
+            scrollView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+            scrollView.heightAnchor.constraint(equalToConstant: 240).isActive = true
+            listView = scrollView
+        }
+
+        let stack = NSStackView(views: [header, listView])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        return stack
+    }
+
+    /// Retained because NSTableView holds dataSource/delegate weakly — without this the
+    /// object would be deallocated immediately after buildContent() returns.
+    private var appListDataSource: AppListDataSource?
 
     /// Regular-policy running apps, excluding Terminal/Safari (already handled by their own
     /// dedicated collectors/gates, not this preference store) and Roundabout itself.
@@ -112,36 +250,133 @@ final class SettingsWindowController: NSWindowController {
             .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
     }
 
-    private func makeRow(app: NSRunningApplication, bundleIdentifier: String) -> NSView {
-        let icon = NSImageView(image: app.icon ?? NSImage())
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.widthAnchor.constraint(equalToConstant: 22).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 22).isActive = true
+    // MARK: - Actions
 
-        let nameField = NSTextField(labelWithString: app.localizedName ?? bundleIdentifier)
-        nameField.font = .systemFont(ofSize: 13)
-        nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let toggle = NSSwitch()
-        toggle.state = AppSummarizationPreferenceStore.isEnabled(bundleIdentifier: bundleIdentifier) ? .on : .off
-        toggle.target = self
-        toggle.action = #selector(toggleChanged(_:))
-        // Piggybacking the bundle identifier on the control's identifier is simpler than a
-        // side-table keyed by ObjectIdentifier, and NSUserInterfaceItemIdentifier is just a
-        // string wrapper, so any bundle ID is a valid value here.
-        toggle.identifier = NSUserInterfaceItemIdentifier(bundleIdentifier)
-
-        let row = NSStackView(views: [icon, nameField, toggle])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalToConstant: 380).isActive = true
-        return row
+    @objc private func loginToggleChanged(_ sender: NSSwitch) {
+        LoginItemManager.setEnabled(sender.state == .on)
+        // Re-read status rather than assuming success (e.g. requiresApproval, or a failure).
+        sender.state = LoginItemManager.isEnabled ? .on : .off
     }
 
-    @objc private func toggleChanged(_ sender: NSSwitch) {
-        guard let bundleIdentifier = sender.identifier?.rawValue else { return }
-        AppSummarizationPreferenceStore.setEnabled(sender.state == .on, forBundleIdentifier: bundleIdentifier)
+    @objc private func providerChanged(_ sender: NSSegmentedControl) {
+        SummarizerPreferenceStore.current = sender.selectedSegment == 0 ? .onDevice : .anthropic
+        onSummarizerPreferenceChanged?()
+        refresh() // API key row's visibility depends on the selected provider
+    }
+
+    @objc private func apiKeyButtonClicked() {
+        if APIKeyStore.load() != nil {
+            APIKeyStore.clear()
+            Log.write("Anthropic API key cleared from Keychain.\n")
+            refresh()
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Anthropic API Key"
+        alert.informativeText = "Used for LLM-generated context summaries. Stored in the macOS Keychain, so it's available no matter how Roundabout is launched."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = "sk-ant-..."
+        alert.accessoryView = field
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        if APIKeyStore.save(key) {
+            Log.write("Anthropic API key saved to Keychain.\n")
+        } else {
+            Log.write("Failed to save Anthropic API key to Keychain — see preceding error.\n")
+        }
+        refresh()
+    }
+}
+
+/// Backs the app-summarization list's NSTableView — a plain NSObject rather than folding
+/// this into SettingsWindowController itself, since NSTableViewDataSource/Delegate's
+/// numberOfRows/viewFor-row methods read more clearly as their own small type.
+private final class AppListDataSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    private let apps: [NSRunningApplication]
+
+    init(apps: [NSRunningApplication]) {
+        self.apps = apps
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        apps.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let app = apps[row]
+        guard let bundleIdentifier = app.bundleIdentifier else { return nil }
+        let identifier = NSUserInterfaceItemIdentifier("AppToggleRow")
+        let rowView = (tableView.makeView(withIdentifier: identifier, owner: self) as? AppToggleRowView) ?? AppToggleRowView(identifier: identifier)
+        rowView.configure(app: app, bundleIdentifier: bundleIdentifier)
+        return rowView
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        36
+    }
+}
+
+/// One row: app icon, name (leading, expands to fill), switch (trailing, pinned to the
+/// row's edge regardless of name length — this is the "list view with right-aligned
+/// switches" layout, as opposed to the earlier version's switch sitting immediately after
+/// whatever-width the name happened to be).
+private final class AppToggleRowView: NSTableCellView {
+    private let iconView = NSImageView()
+    private let nameField = NSTextField(labelWithString: "")
+    private let toggle = NSSwitch()
+    private var bundleIdentifier: String = ""
+
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+        nameField.font = .systemFont(ofSize: 13)
+        nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        toggle.translatesAutoresizingMaskIntoConstraints = false
+        toggle.target = self
+        toggle.action = #selector(toggleChanged)
+
+        addSubview(iconView)
+        addSubview(nameField)
+        addSubview(toggle)
+
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 22),
+            iconView.heightAnchor.constraint(equalToConstant: 22),
+
+            nameField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameField.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -8),
+
+            toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            toggle.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    func configure(app: NSRunningApplication, bundleIdentifier: String) {
+        self.bundleIdentifier = bundleIdentifier
+        iconView.image = app.icon
+        nameField.stringValue = app.localizedName ?? bundleIdentifier
+        toggle.state = AppSummarizationPreferenceStore.isEnabled(bundleIdentifier: bundleIdentifier) ? .on : .off
+    }
+
+    @objc private func toggleChanged() {
+        AppSummarizationPreferenceStore.setEnabled(toggle.state == .on, forBundleIdentifier: bundleIdentifier)
     }
 }

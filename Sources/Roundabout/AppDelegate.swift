@@ -51,18 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.markActivated(context)
         }
 
-        // Switching summarization providers should be felt immediately, not after the
-        // existing 5-minute cache entries happen to expire.
-        statusItemController.onSummarizerPreferenceChanged = { [weak self] in
-            guard let self else { return }
-            self.summaryCache.removeAll()
-            self.refreshAndRender()
-        }
-
         // Lazily create the Settings window once, then just show/refresh it on repeat opens
         // (isReleasedWhenClosed = false on its NSWindow keeps the controller instance valid
-        // across close/reopen). refresh() rebuilds the app list each time, since which apps
-        // are running can change between opens.
+        // across close/reopen). refresh() rebuilds its content each time (app list, provider
+        // state, ...), since all of that can change between opens.
         statusItemController.onOpenSettings = { [weak self] in
             guard let self else { return }
             let controller: SettingsWindowController
@@ -71,6 +63,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 controller.refresh()
             } else {
                 controller = SettingsWindowController()
+                // Switching summarization providers should be felt immediately, not after
+                // the existing 5-minute cache entries happen to expire.
+                controller.onSummarizerPreferenceChanged = { [weak self] in
+                    guard let self else { return }
+                    self.summaryCache.removeAll()
+                    self.refreshAndRender()
+                }
                 self.settingsWindowController = controller
             }
             NSApp.activate(ignoringOtherApps: true)

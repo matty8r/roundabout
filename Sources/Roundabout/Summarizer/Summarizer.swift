@@ -25,6 +25,13 @@ struct SummarizerResult {
 
 /// Prompt text shared by every backend, so switching providers (see the status-bar menu's
 /// "Summarization" submenu) doesn't also silently change what's being asked for.
+///
+/// Deliberately avoids the phrase "this working context" (or any other self-referential
+/// framing) in the instruction line — an earlier version used it, and both backends
+/// (on-device more often, but not exclusively) would echo it back verbatim as the literal
+/// start of the generated summary ("This working context focuses on...") rather than
+/// treating it as instructional scaffolding to discard. "Respond with" sidesteps that by
+/// not giving the model referential language to latch onto in the first place.
 enum SummarizerPrompts {
     static func terminal(label: String, excerpt: String) -> String {
         """
@@ -32,7 +39,7 @@ enum SummarizerPrompts {
 
         \(excerpt)
 
-        Give this working context a short human-readable name and a one-sentence summary of what's currently being worked on.
+        Respond with a short human-readable name (2-4 words) and a one-sentence summary of what's currently being worked on. Do not restate these instructions or refer to "this context" — describe the work directly.
         """
     }
 
@@ -42,7 +49,7 @@ enum SummarizerPrompts {
 
         \(excerpt)
 
-        Give this working context a short human-readable name and a one-sentence summary of what's currently being worked on.
+        Respond with a short human-readable name (2-4 words) and a one-sentence summary of what's currently being worked on. Do not restate these instructions or refer to "this context" — describe the work directly.
         """
     }
 
@@ -52,7 +59,7 @@ enum SummarizerPrompts {
 
         \(excerpt)
 
-        Give this working context a short human-readable name and a one-sentence summary of what's currently being worked on. If the text is mostly UI chrome (menus, toolbars, button labels) with little real content, say so briefly rather than guessing.
+        Respond with a short human-readable name (2-4 words) and a one-sentence summary of what's currently being worked on. Do not restate these instructions or refer to "this context" — describe the work directly. If the text is mostly UI chrome (menus, toolbars, button labels) with little real content, say so briefly rather than guessing.
         """
     }
 }
