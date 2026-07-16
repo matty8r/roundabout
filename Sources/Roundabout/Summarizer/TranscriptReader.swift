@@ -8,16 +8,30 @@ enum TranscriptReader {
         let projectsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(sanitized)")
 
+        // Every failure point here previously returned nil silently — indistinguishable in
+        // the log from "processName wasn't 'claude'" (the gate one level up in AppDelegate,
+        // which never even calls this), which is exactly why a real report of "I get all the
+        // Terminal tabs, just no summaries" on a second Mac had no log evidence to diagnose
+        // from. Logged once per distinct cause below, same as the Safari collector fixes.
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: projectsDir, includingPropertiesForKeys: [.contentModificationDateKey]
-        ) else { return nil }
+        ) else {
+            Log.write("Terminal transcript lookup failed for \(cwd) — no directory at \(projectsDir.path) (no Claude Code session has run here, or the project directory naming differs from expected).\n")
+            return nil
+        }
 
         let transcripts = files.filter { $0.pathExtension == "jsonl" }
         guard let latest = transcripts.max(by: { lhs, rhs in
             modificationDate(lhs) < modificationDate(rhs)
-        }) else { return nil }
+        }) else {
+            Log.write("Terminal transcript lookup failed for \(cwd) — \(projectsDir.path) exists but has no .jsonl transcript files.\n")
+            return nil
+        }
 
-        guard let contents = try? String(contentsOf: latest, encoding: .utf8) else { return nil }
+        guard let contents = try? String(contentsOf: latest, encoding: .utf8) else {
+            Log.write("Terminal transcript lookup failed for \(cwd) — couldn't read \(latest.path).\n")
+            return nil
+        }
         let lines = contents.split(separator: "\n").suffix(300)
 
         var textBlocks: [String] = []
@@ -37,7 +51,10 @@ enum TranscriptReader {
             }
         }
 
-        guard !textBlocks.isEmpty else { return nil }
+        guard !textBlocks.isEmpty else {
+            Log.write("Terminal transcript lookup for \(cwd) found \(latest.lastPathComponent) but extracted no usable text blocks from the last \(lines.count) lines — transcript format may have changed.\n")
+            return nil
+        }
         let joined = textBlocks.suffix(12).joined(separator: "\n---\n")
         return String(joined.suffix(maxCharacters))
     }
